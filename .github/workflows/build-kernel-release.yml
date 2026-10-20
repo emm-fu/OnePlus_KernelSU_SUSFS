@@ -83,7 +83,7 @@ on:
 
 jobs:
   set-op-model:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest migrates to Ubuntu 26 from 2026-10-19
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       device_count: ${{ steps.set-matrix.outputs.count }}
@@ -157,12 +157,12 @@ jobs:
               jq_filter="map(select(.os_version == \"A14\"))"
               ;;
             OP-ACE-3V)
-              jq_filter="map(select(.model == \"OP-ACE-3V\"))"
-              echo "ℹ️  Model filter applied: OP-ACE-3V"
+              jq_filter="map(select(.model | startswith(\"OP-ACE-3V\")))"
+              echo "ℹ️  Model filter applied: OP-ACE-3V (all variants)"
               ;;
             OP-ACE-3V-A16)
-              jq_filter="map(select(.model == \"OP-ACE-3V\" and .os_version == \"A16\"))"
-              echo "ℹ️  Model filter applied: OP-ACE-3V, A16 only"
+              jq_filter="map(select(.model == \"OP-ACE-3V-6.1.118\" and .os_version == \"A16\"))"
+              echo "ℹ️  Model filter applied: OP-ACE-3V, A16, 6.1.118-pinned source"
               ;;
             android*-*.*)
               # Extract android version and kernel version
@@ -556,7 +556,7 @@ jobs:
 
   prepare_ccache:
     name: Prepare ccache binary (download once)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest migrates to Ubuntu 26 from 2026-10-19
     steps:
       # Download the custom ccache binary ONCE for the whole matrix and share it as
       # an artifact. Previously every parallel matrix job curl'd the same GitHub raw
@@ -598,7 +598,7 @@ jobs:
       !cancelled() &&
       needs.set-op-model.result == 'success' &&
       (needs.mirror_toolchain.result == 'success' || needs.mirror_toolchain.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest migrates to Ubuntu 26 from 2026-10-19
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.set-op-model.outputs.matrix) }}
@@ -617,15 +617,21 @@ jobs:
 
       - name: Install Minimal Dependencies
         run: |
-          set -euo pipefail
+          set -uo pipefail
           echo "::group::Install dependencies"
-          sudo apt-get -o Acquire::Retries=3 update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            git curl ca-certificates build-essential clang lld flex bison \
-            libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
-            libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils pigz
+          . /etc/os-release; echo "Runner OS: ${PRETTY_NAME:-unknown} / $(uname -m)"
+          sudo apt-get -o Acquire::Retries=3 update -qq || sudo apt-get -o Acquire::Retries=3 update
+          PKGS="git curl ca-certificates build-essential clang lld flex bison libelf-dev libssl-dev libncurses-dev zlib1g-dev libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils pigz"
+          if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $PKGS lz4 >/tmp/apt-main.log 2>&1; then
+            echo "✅ Dependencies installed (with lz4)"
+          elif sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $PKGS >/tmp/apt-nolz4.log 2>&1; then
+            echo "✅ Dependencies installed (without extra lz4)"
+          else
+            echo "::error::apt-get install failed on ${PRETTY_NAME:-unknown}; tail below"
+            tail -n 8 /tmp/apt-main.log | sed 's/^/::error::apt: /'
+            exit 1
+          fi
           sudo apt-get clean
-          echo "✅ Dependencies installed"
           echo "::endgroup::"
 
       - name: Get prebuilt ccache (downloaded once by prepare_ccache)
@@ -855,7 +861,7 @@ jobs:
 
   trigger-release:
     needs: [set-op-model, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned: ubuntu-latest migrates to Ubuntu 26 from 2026-10-19
     if: |
       !cancelled() &&
       inputs.make_release == true &&
