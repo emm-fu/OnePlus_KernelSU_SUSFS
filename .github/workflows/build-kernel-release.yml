@@ -30,12 +30,12 @@ on:
           - android12-5.10
           - OP-ACE-3V
           - OP-ACE-3V-A16
-        default: A14+15+16
+        default: OP-ACE-3V-A16
       ksu_options:
         description: 'Enter KernelSU build json'
         required: true
         type: string
-        default: '[{"type":"ksun","hash":"dev"}]'
+        default: '[{"type":"BAKA","hash":"main"}]'
       optimize_level:
         description: "Compiler optimization level"
         required: true
