@@ -1,0 +1,61 @@
+name: 📦 Publish build artifact as release asset
+
+# Actions artifacts always require an authenticated download, which makes it
+# impossible to fetch a finished AK3 zip from outside GitHub. This workflow
+# copies a chosen artifact into a release asset, which is anonymously
+# downloadable and pinnable by URL.
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: 'Artifact ID (from the build run page or the artifacts API)'
+        required: true
+        type: string
+      tag:
+        description: 'Release tag to publish into'
+        required: true
+        default: 'kernel-builds'
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 📥 Download artifact via API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          gh api "/repos/${{ github.repository }}/actions/artifacts/${{ inputs.artifact_id }}/zip" > artifact.zip
+          ls -l artifact.zip
+          unzip -o artifact.zip -d out
+          echo "--- contents:"
+          find out -type f | head -20
+          # an artifact containing exactly one zip is re-published as-is
+          find out -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print
+
+      - name: 🏷️ Publish to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "Kernel builds" --notes "AnyKernel3 zips built by this fork"
+          fi
+          count=0
+          while IFS= read -r f; do
+            gh release upload "$TAG" "$f" --clobber
+            count=$((count+1))
+          done < <(find out -type f \( -name '*.zip' -o -name '*.tar.gz' \))
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no zip found inside artifact"
+            exit 1
+          fi
+          echo "✅ uploaded $count file(s) to release '$TAG'"
