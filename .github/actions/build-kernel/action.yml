@@ -12,6 +12,7 @@ inputs:
     options:
       - KSUN
       - KSU
+      - BAKA
   ksu_branch_or_hash:
     description: 'KSU branch or commit hash (empty = auto-detect by ksu_type)'
     required: false
@@ -998,6 +999,52 @@ runs:
         echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
         echo "KernelSU Version: $KSU_VERSION"
         echo "✅ KernelSU added (commit: ${KSU_COMMIT_SHA:0:8})"
+        echo "::endgroup::"
+
+    - name: Add BakaSU
+      shell: bash
+      if: ${{ inputs.ksu_type == 'BAKA' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Add BakaSU"
+        cd "$KERNEL_PLATFORM_FOLDER"
+        echo "Adding BakaSU..."
+        KSU_INPUT="${{ inputs.ksu_branch_or_hash }}"
+        if [ -z "$KSU_INPUT" ]; then
+          curl --fail --location --proto '=https' -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -
+        else
+          curl --fail --location --proto '=https' -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -s "$KSU_INPUT"
+        fi
+        git submodule update --init --recursive 2>/dev/null || true
+        # BakaSU's setup.sh always clones into a directory named "KernelSU"
+        cd KernelSU/kernel
+        # BakaSU has no DKSU_VERSION in its Makefile: kernel/Kbuild derives the
+        # version itself as 30000 + commit count + 700. Use the same formula here
+        # so the artifact name, the env var and the compiled-in value agree.
+        KSU_VERSION=$(expr 30000 + $(/usr/bin/git rev-list --count HEAD) + 700)
+        KSU_COMMIT_SHA=$(git rev-parse HEAD)
+        echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> $GITHUB_ENV
+        cd ..
+        echo "Add BakaSU Configuration Settings"
+        cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
+        CONFIG_KSU=y
+        CONFIG_KSU_TRACEPOINT_HOOK=y
+        EOF
+        echo "NEED_HOOKS=false" >> $GITHUB_ENV
+        # BakaSU exposes SUSFS only through its "SUSFS Inline Hook" mode, which
+        # needs susfs4ksu's inline-hook patches in fs/ AND kernel/sys.c +
+        # kernel/reboot.c + kernel/kallsyms.c. This pipeline only copies the
+        # fs/ + include/linux/ files, so a BAKA build cannot carry SUSFS:
+        # force it off instead of shipping half-applied patches.
+        if [ "$OP_SUSFS" = "true" ]; then
+          echo "::warning::BakaSU: SUSFS forced OFF for BAKA builds (inline-hook kernel patches are not applied by this pipeline)"
+        fi
+        echo "OP_SUSFS=false" >> $GITHUB_ENV
+        echo "BAKA" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+        echo "$KSU_VERSION" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+        echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+        echo "BakaSU Version: $KSU_VERSION"
+        echo "✅ BakaSU added (commit: ${KSU_COMMIT_SHA:0:8})"
         echo "::endgroup::"
 
     - name: Apply SUSFS Patches
